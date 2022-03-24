@@ -7,23 +7,23 @@
 const char* aws_endpoint = "akyvbbf6sysh7-ats.iot.eu-central-1.amazonaws.com";
 
 // Topic we are going publish data to
-const char* aws_topic  = "$aws/things/ESP32_BME280_Thing/shadow/update";
+// const char* aws_topic  = "$aws/things/ESP32_BME280_Thing/shadow/update";
+
+// Create WiFiClientSecure instance
+BearSSL::WiFiClientSecure secureClient;
 
 // Set private key and certificates to use X.509 authentication
-BearSSL::X509List client_crt(certificatePemCrt);
-BearSSL::PrivateKey client_key(privatePemKey);
+BearSSL::X509List clientCertList(certificatePemCrt);
+BearSSL::PrivateKey clientPrivKey(privatePemKey);
 BearSSL::X509List rootCert(caPemCrt);
 
 // Declaration of callback function for receiving MQTT messages
 void msgReceived(char* topic, byte* payload, unsigned int len);
 
-// Create WiFiClientSecure instance
-WiFiClientSecure wiFiClient;
-
 // Create PubSubClient instance
 // Using X.509 certificate based mutual authentication --> use 8883
 // Using MQTT over WebSocket --> use 443 or 8443
-PubSubClient pubSubClient(aws_endpoint, 8883, msgReceived, wiFiClient); 
+PubSubClient pubSubClient(aws_endpoint, 8883, msgReceived, secureClient); 
 
 unsigned long lastPublish;
 int msgCount;
@@ -37,7 +37,7 @@ void pubSubCheckConnect() {
     Serial.print("PubSubClient connecting to: "); Serial.print(aws_endpoint);
     while (!pubSubClient.connected()) {
       Serial.print(".");
-      if (pubSubClient.connect("1234")) {
+      if (pubSubClient.connect("Testclient")) {
         Serial.println(" connected");
         pubSubClient.subscribe("inTopic");
       } else {
@@ -45,7 +45,7 @@ void pubSubCheckConnect() {
         Serial.println(pubSubClient.state());
 
         char buf[256];
-        wiFiClient.getLastSSLError(buf,256);
+        secureClient.getLastSSLError(buf,256);
         Serial.print("WiFiClientSecure SSL error: ");
         Serial.println(buf);
       }
@@ -70,6 +70,10 @@ void msgReceived(char* topic, byte* payload, u_int32_t length) {
   Serial.println();
 }
 
+/**
+ * @brief Set the Current Time object
+ * 
+ */
 void setCurrentTime() {
   configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
@@ -84,6 +88,8 @@ void setCurrentTime() {
   struct tm timeinfo;
   gmtime_r(&now, &timeinfo);
   Serial.print("Current time: "); Serial.print(asctime(&timeinfo));
+
+  secureClient.setX509Time(now);
 }
 
 /**
@@ -110,8 +116,8 @@ void setup() {
   // get current time, otherwise certificates are flagged as expired
   setCurrentTime();
 
-  wiFiClient.setClientRSACert(&client_crt, &client_key);
-  wiFiClient.setTrustAnchors(&rootCert);
+  secureClient.setClientRSACert(&clientCertList, &clientPrivKey);
+  secureClient.setTrustAnchors(&rootCert);
 }
 
 /**
@@ -120,7 +126,7 @@ void setup() {
  */
 void loop() {
   pubSubCheckConnect();
-
+ 
   if (millis() - lastPublish > 10000) {
     // message which will be send to AWS IoT via MQTT
     String msg = String("Hello from ESP8266: ") + ++msgCount;
