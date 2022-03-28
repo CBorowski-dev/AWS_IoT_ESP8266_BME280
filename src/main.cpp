@@ -1,13 +1,20 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include <ArduinoJson.h>
 #include "private_data.h"
 
 // AWS endpoint
 const char* aws_endpoint = "akyvbbf6sysh7-ats.iot.eu-central-1.amazonaws.com";
 
-// Topic we are going publish data to
-// const char* aws_topic  = "$aws/things/ESP32_BME280_Thing/shadow/update";
+// Client ID
+const char* clientID = "ESP32_BME280_Thing";
+
+// Topic we are going publish data to and to receive data from
+const char* send_topic  = "ESP32_BME280_Thing/dataSend";
+const char* receive_topic  = "ESP32_BME280_Thing/dataReceive";
 
 // Create WiFiClientSecure instance
 BearSSL::WiFiClientSecure secureClient;
@@ -16,6 +23,14 @@ BearSSL::WiFiClientSecure secureClient;
 BearSSL::X509List clientCertList(certificatePemCrt);
 BearSSL::PrivateKey clientPrivKey(privatePemKey);
 BearSSL::X509List rootCert(caPemCrt);
+
+// Adafruit_BME280 instance
+Adafruit_BME280 bme280;
+
+// Variables for storing BME280 data
+float temperature;
+float pressure;
+float humidity;
 
 // Declaration of callback function for receiving MQTT messages
 void msgReceived(char* topic, byte* payload, unsigned int len);
@@ -37,9 +52,9 @@ void pubSubCheckConnect() {
     Serial.print("PubSubClient connecting to: "); Serial.print(aws_endpoint);
     while (!pubSubClient.connected()) {
       Serial.print(".");
-      if (pubSubClient.connect("Testclient")) {
+      if (pubSubClient.connect(clientID)) {
         Serial.println(" connected");
-        pubSubClient.subscribe("inTopic");
+        pubSubClient.subscribe(receive_topic);
       } else {
         Serial.print("failed, rc=");
         Serial.println(pubSubClient.state());
@@ -94,18 +109,71 @@ void setCurrentTime() {
 
 /**
  * @brief 
+ * Read sensor data
+ */
+void readSensorData() {
+  temperature = bme280.readTemperature();
+  pressure = bme280.readPressure() / 100.0F;
+  humidity = bme280.readHumidity();
+}
+
+/**
+ * @brief 
+ * Prepare sensor data for MQTT transmission and publish
+ */
+void publishSensorData() {
+  /**
+  {
+    "ClientID": "ESP32_BME280_Thing",
+    "BME280": {
+      "Temperature": 21.7,
+      "Humidity": 66.6,
+      "Pressure": 988.6
+    },
+    "TempUnit": "C"
+    "HumidityUnit": "g/m3"
+    "PressureUnit": "hPa",
+  }
+  */
+
+  // create JSON document
+  StaticJsonDocument<200> doc;
+
+  doc["ClientID"] = clientID;
+  JsonObject nestedObject = doc.createNestedObject("BME280");
+  nestedObject["Temperature"] = temperature;
+  nestedObject["Humidity"] = humidity;
+  nestedObject["Pressure"] = pressure;
+  doc["TempUnit"] = "°C";
+  doc["HumidityUnit"] = "%";
+  doc["PressureUnit"] = "hPa";
+
+  // convert JSON document to char array
+  u_int16_t jsonSize = measureJson(doc);
+  Serial.println(jsonSize);
+  char buffer[jsonSize + 1] = "";
+  buffer[jsonSize + 1] = '\n';
+  serializeJson(doc, buffer, jsonSize);
+
+  // publish data
+  pubSubClient.publish(send_topic, buffer);
+  Serial.print("Published: "); Serial.println(buffer);
+}
+
+/**
+ * @brief 
  * Arduino framework setup() function
  */
 void setup() {
   // Set ESP8266 to run at 160 Mhz and not the default 80 Mhz
   os_update_cpu_frequency(160);
 
+  // Configure serial connection
   Serial.begin(115200);
   Serial.println("ESP8266 AWS IoT Example");
-
-  Serial.print("Connecting to ");
-  Serial.println(WIFI_SSID);
+  Serial.print("Connecting to "); Serial.println(WIFI_SSID);
   
+  // Connect to WiFi
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -113,9 +181,17 @@ void setup() {
   }
   Serial.print(", WiFi connected, IP address: "); Serial.println(WiFi.localIP());
 
-  // get current time, otherwise certificates are flagged as expired
+  // Initialize BME280 sensor to address 0x76 
+  int status = bme280.begin(0x76);
+  if (!status) {
+      Serial.println("BME280 sensor not available!");
+      while (1);
+  }
+
+  // Get current time, otherwise certificates are flagged as expired
   setCurrentTime();
 
+  // Set certificates
   secureClient.setClientRSACert(&clientCertList, &clientPrivKey);
   secureClient.setTrustAnchors(&rootCert);
 }
@@ -128,10 +204,10 @@ void loop() {
   pubSubCheckConnect();
  
   if (millis() - lastPublish > 10000) {
-    // message which will be send to AWS IoT via MQTT
-    String msg = String("Hello from ESP8266: ") + ++msgCount;
-    pubSubClient.publish("outTopic", msg.c_str());
-    Serial.print("Published: "); Serial.println(msg);
+    // Read sensor data
+    readSensorData();
+    // Send sensor data in JSON format to AWS IoT
+    publishSensorData();
     lastPublish = millis();
   }
 }
