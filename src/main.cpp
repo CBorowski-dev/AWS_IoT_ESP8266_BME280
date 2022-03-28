@@ -150,7 +150,6 @@ void publishSensorData() {
 
   // convert JSON document to char array
   u_int16_t jsonSize = measureJson(doc);
-  Serial.println(jsonSize);
   char buffer[jsonSize + 1] = "";
   buffer[jsonSize + 1] = '\n';
   serializeJson(doc, buffer, jsonSize);
