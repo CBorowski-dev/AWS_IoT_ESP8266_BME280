@@ -6,15 +6,22 @@
 #include <ArduinoJson.h>
 #include "private_data.h"
 
+// Configuration for the timeserver
+const char* ntpServer1 = "pool.ntp.org";    // primary server 
+const char* ntpServer2 = "time.nist.gov";   // secondary server
+const long  gmtOffset_sec = 3600;           // GMT offset (seconds)
+const int   daylightOffset_sec = 3600;      // daylight offset (seconds)
+time_t gmtRawTime;
+
 // AWS endpoint
 const char* aws_endpoint = "akyvbbf6sysh7-ats.iot.eu-central-1.amazonaws.com";
 
 // Client ID
-const char* clientID = "ESP32_BME280_Thing";
+const char* clientID = "WeatherStation_2";
 
 // Topic we are going publish data to and to receive data from
-const char* send_topic  = "ESP32_BME280_Thing/dataSend";
-const char* receive_topic  = "ESP32_BME280_Thing/dataReceive";
+const char* send_topic  = "WeatherStation_2/dataSend";
+const char* receive_topic  = "WeatherStation_2/dataReceive";
 
 // Create WiFiClientSecure instance
 BearSSL::WiFiClientSecure secureClient;
@@ -41,7 +48,6 @@ void msgReceived(char* topic, byte* payload, unsigned int len);
 PubSubClient pubSubClient(aws_endpoint, 8883, msgReceived, secureClient); 
 
 unsigned long lastPublish;
-int msgCount;
 
 /**
  * @brief 
@@ -89,22 +95,17 @@ void msgReceived(char* topic, byte* payload, u_int32_t length) {
  * @brief Set the Current Time object
  * 
  */
-void setCurrentTime() {
-  configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-
+void readCurrentTime() {
   Serial.print("Waiting for NTP time sync: ");
-  time_t now = time(nullptr);
-  while (now < 8 * 3600 * 2) {
+  gmtRawTime = time(nullptr);
+  while (gmtRawTime < 8 * 3600 * 2) {
     delay(500);
     Serial.print(".");
-    now = time(nullptr);
+    gmtRawTime = time(nullptr);
   }
   Serial.println("");
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  Serial.print("Current time: "); Serial.print(asctime(&timeinfo));
-
-  secureClient.setX509Time(now);
+  struct tm* timeinfo = localtime(&gmtRawTime);
+  Serial.print("Current time: "); Serial.print(asctime(timeinfo));
 }
 
 /**
@@ -124,7 +125,12 @@ void readSensorData() {
 void publishSensorData() {
   /**
   {
-    "ClientID": "ESP32_BME280_Thing",
+    "ClientID": "WeatherStation_2",
+    "Time": "Wed Mar 30 20:26:48 2022",
+    "GPS": {
+      "latitude": 51.764000,
+      "longitude": 8.777043
+    },
     "BME280": {
       "Temperature": 21.7,
       "Humidity": 66.6,
@@ -138,12 +144,16 @@ void publishSensorData() {
 
   // create JSON document
   StaticJsonDocument<200> doc;
-
   doc["ClientID"] = clientID;
-  JsonObject nestedObject = doc.createNestedObject("BME280");
-  nestedObject["Temperature"] = temperature;
-  nestedObject["Humidity"] = humidity;
-  nestedObject["Pressure"] = pressure;
+  struct tm* timeinfo = localtime(&gmtRawTime);
+  doc["Time"] = asctime(timeinfo);
+  JsonObject coordinate = doc.createNestedObject("GPS");
+  coordinate["latitude"] = "51.764000";
+  coordinate["longitude"] = "8.777043";
+  JsonObject data = doc.createNestedObject("BME280");
+  data["Temperature"] = temperature;
+  data["Humidity"] = humidity;
+  data["Pressure"] = pressure;
   doc["TempUnit"] = "°C";
   doc["HumidityUnit"] = "%";
   doc["PressureUnit"] = "hPa";
@@ -169,7 +179,7 @@ void setup() {
 
   // Configure serial connection
   Serial.begin(115200);
-  Serial.println("ESP8266 AWS IoT Example");
+  Serial.println("AWS IoT Example");
   Serial.print("Connecting to "); Serial.println(WIFI_SSID);
   
   // Connect to WiFi
@@ -188,7 +198,9 @@ void setup() {
   }
 
   // Get current time, otherwise certificates are flagged as expired
-  setCurrentTime();
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+  readCurrentTime();
+  secureClient.setX509Time(gmtRawTime);
 
   // Set certificates
   secureClient.setClientRSACert(&clientCertList, &clientPrivKey);
@@ -202,7 +214,8 @@ void setup() {
 void loop() {
   pubSubCheckConnect();
  
-  if (millis() - lastPublish > 10000) {
+  // Send sonsor data every 30 seconds
+  if (millis() - lastPublish > 30000) {
     // Read sensor data
     readSensorData();
     // Send sensor data in JSON format to AWS IoT
