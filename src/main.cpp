@@ -96,16 +96,13 @@ void msgReceived(char* topic, byte* payload, u_int32_t length) {
  * 
  */
 void readCurrentTime() {
-  Serial.print("Waiting for NTP time sync: ");
+  Serial.println("Waiting for NTP time sync...");
   gmtRawTime = time(nullptr);
   while (gmtRawTime < 8 * 3600 * 2) {
     delay(500);
-    Serial.print(".");
     gmtRawTime = time(nullptr);
   }
-  Serial.println("");
-  struct tm* timeinfo = localtime(&gmtRawTime);
-  Serial.print("Current time: "); Serial.print(asctime(timeinfo));
+  Serial.print("Current time: "); Serial.print(asctime(localtime(&gmtRawTime)));
 }
 
 /**
@@ -136,17 +133,17 @@ void publishSensorData() {
       "Humidity": 66.6,
       "Pressure": 988.6
     },
-    "TempUnit": "C"
-    "HumidityUnit": "g/m3"
-    "PressureUnit": "hPa",
+    "TempUnit": "C",
+    "HumidityUnit": "g/m3",
+    "PressureUnit": "hPa"
   }
   */
 
   // create JSON document
-  StaticJsonDocument<200> doc;
+  StaticJsonDocument<250> doc;
   doc["ClientID"] = clientID;
-  struct tm* timeinfo = localtime(&gmtRawTime);
-  doc["Time"] = asctime(timeinfo);
+  readCurrentTime();
+  doc["Time"] = asctime(localtime(&gmtRawTime));
   JsonObject coordinate = doc.createNestedObject("GPS");
   coordinate["latitude"] = "51.764000";
   coordinate["longitude"] = "8.777043";
