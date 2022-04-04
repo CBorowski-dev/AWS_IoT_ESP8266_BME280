@@ -140,23 +140,30 @@ void publishSensorData() {
   */
 
   // create JSON document
-  StaticJsonDocument<250> doc;
+  StaticJsonDocument<270> doc;
   doc["ClientID"] = clientID;
-  readCurrentTime();
-  doc["Time"] = asctime(localtime(&gmtRawTime));
+  // include time, e.g. "Mon Apr  4 20:07:53 2022" --> does not work right now
+  // char t_buffer[26];
+  // readCurrentTime();
+  // strftime(t_buffer, 25, "%a %b %d %T %G", localtime(&gmtRawTime));
+  // doc["Time"] = t_buffer;
+  // include GPS coordinate
   JsonObject coordinate = doc.createNestedObject("GPS");
   coordinate["latitude"] = "51.764000";
   coordinate["longitude"] = "8.777043";
+  // include sensor data
   JsonObject data = doc.createNestedObject("BME280");
   data["Temperature"] = temperature;
   data["Humidity"] = humidity;
   data["Pressure"] = pressure;
+  // include sensor data units
   doc["TempUnit"] = "°C";
   doc["HumidityUnit"] = "%";
   doc["PressureUnit"] = "hPa";
 
   // convert JSON document to char array
   u_int16_t jsonSize = measureJson(doc);
+  Serial.println(jsonSize);
   char buffer[jsonSize + 1] = "";
   buffer[jsonSize + 1] = '\n';
   serializeJson(doc, buffer, jsonSize);
@@ -195,7 +202,9 @@ void setup() {
   }
 
   // Get current time, otherwise certificates are flagged as expired
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+  // For some reason configuring time with the local GMT offset and the daylight offset leads to no income payload on AWS ioT side?!
+  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+  configTime(0, 0, ntpServer1, ntpServer2);
   readCurrentTime();
   secureClient.setX509Time(gmtRawTime);
 
@@ -212,7 +221,7 @@ void loop() {
   pubSubCheckConnect();
  
   // Send sonsor data every 30 seconds
-  if (millis() - lastPublish > 30000) {
+  if (millis() - lastPublish > 10000) {
     // Read sensor data
     readSensorData();
     // Send sensor data in JSON format to AWS IoT
