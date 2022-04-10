@@ -17,11 +17,11 @@ time_t gmtRawTime;
 const char* aws_endpoint = "akyvbbf6sysh7-ats.iot.eu-central-1.amazonaws.com";
 
 // Client ID
-const char* clientID = "WeatherStation_2";
+const char* clientID = "weatherstation2";
 
 // Topic we are going publish data to and to receive data from
-const char* send_topic  = "WeatherStation_2/dataSend";
-const char* receive_topic  = "WeatherStation_2/dataReceive";
+const char* send_topic  = "data/weatherapp/weatherstation2/send";
+const char* receive_topic  = "cmd/weatherapp/weatherstation2/receive";
 
 // Create WiFiClientSecure instance
 BearSSL::WiFiClientSecure secureClient;
@@ -122,7 +122,7 @@ void readSensorData() {
 void publishSensorData() {
   /**
   {
-    "ClientID": "WeatherStation_2",
+    "ClientID": "weatherstation2",
     "Time": "Wed Mar 30 20:26:48 2022",
     "GPS": {
       "latitude": 51.764000,
@@ -163,7 +163,7 @@ void publishSensorData() {
 
   // convert JSON document to char array
   u_int16_t jsonSize = measureJson(doc);
-  Serial.println(jsonSize);
+  // Serial.println(jsonSize);
   char buffer[jsonSize + 1] = "";
   buffer[jsonSize + 1] = '\n';
   serializeJson(doc, buffer, jsonSize);
