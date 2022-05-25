@@ -11,7 +11,10 @@ const char* ntpServer1 = "pool.ntp.org";    // primary server
 const char* ntpServer2 = "time.nist.gov";   // secondary server
 const long  gmtOffset_sec = 3600;           // GMT offset (seconds)
 const int   daylightOffset_sec = 3600;      // daylight offset (seconds)
+const u_int16_t bufferSize = 400;           // buffer size used by the PubSubClient
 time_t gmtRawTime;
+
+unsigned long time_between_messages = 10000;          // time between MQTT messages in msec
 
 // AWS endpoint
 const char* aws_endpoint = "akyvbbf6sysh7-ats.iot.eu-central-1.amazonaws.com";
@@ -120,7 +123,7 @@ void readSensorData() {
  * Prepare sensor data for MQTT transmission and publish
  */
 void publishSensorData() {
-  /**
+  /** Payload in JSON format
   {
     "ClientID": "weatherstation2",
     "Time": "Wed Mar 30 20:26:48 2022",
@@ -133,29 +136,29 @@ void publishSensorData() {
       "Humidity": 66.6,
       "Pressure": 988.6
     },
-    "TempUnit": "C",
-    "HumidityUnit": "g/m3",
+    "TempUnit": "°C",
+    "HumidityUnit": "%",
     "PressureUnit": "hPa"
   }
   */
 
   // create JSON document
-  StaticJsonDocument<270> doc;
+  StaticJsonDocument<bufferSize> doc;
   doc["ClientID"] = clientID;
-  // include time, e.g. "Mon Apr  4 20:07:53 2022" --> does not work right now
-  // char t_buffer[26];
-  // readCurrentTime();
-  // strftime(t_buffer, 25, "%a %b %d %T %G", localtime(&gmtRawTime));
-  // doc["Time"] = t_buffer;
-  // include GPS coordinate
-  JsonObject coordinate = doc.createNestedObject("GPS");
-  coordinate["latitude"] = "51.764000";
-  coordinate["longitude"] = "8.777043";
-  // include sensor data
-  JsonObject data = doc.createNestedObject("BME280");
-  data["Temperature"] = temperature;
-  data["Humidity"] = humidity;
-  data["Pressure"] = pressure;
+  // include time
+  char t_buffer[26];
+  readCurrentTime();
+  strftime(t_buffer, 25, "%a %b %d %T %G", localtime(&gmtRawTime));
+  doc["Time"] = t_buffer;
+  // include GPS coordinate, here hard coded
+  JsonObject GPS = doc.createNestedObject("GPS");
+  GPS["latitude"] = 51.764000;
+  GPS["longitude"] = 8.777043;
+  // include BME280 sensor data
+  JsonObject BME280 = doc.createNestedObject("BME280");
+  BME280["Temperature"] = temperature;
+  BME280["Humidity"] = humidity;
+  BME280["Pressure"] = pressure;
   // include sensor data units
   doc["TempUnit"] = "°C";
   doc["HumidityUnit"] = "%";
@@ -169,8 +172,11 @@ void publishSensorData() {
   serializeJson(doc, buffer, jsonSize);
 
   // publish data
-  pubSubClient.publish(send_topic, buffer);
-  Serial.print("Published: "); Serial.println(buffer);
+  if (pubSubClient.publish(send_topic, buffer)) {
+    Serial.print("==> Message published: "); Serial.println(buffer);
+  } else {
+    Serial.print("==> Message couldn't be published: "); Serial.println(buffer);
+  }
 }
 
 /**
@@ -201,6 +207,9 @@ void setup() {
       while (1);
   }
 
+  // Increase buffer size from default value 256 (see PubSubClient.h) to 400
+  pubSubClient.setBufferSize(bufferSize);
+
   // Get current time, otherwise certificates are flagged as expired
   // For some reason configuring time with the local GMT offset and the daylight offset leads to no income payload on AWS ioT side?!
   // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
@@ -220,8 +229,8 @@ void setup() {
 void loop() {
   pubSubCheckConnect();
  
-  // Send sonsor data every 30 seconds
-  if (millis() - lastPublish > 10000) {
+  // Send sonsor data every 10 seconds
+  if ((millis() - lastPublish) > time_between_messages) {
     // Read sensor data
     readSensorData();
     // Send sensor data in JSON format to AWS IoT
