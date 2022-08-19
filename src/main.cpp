@@ -51,6 +51,7 @@ void msgReceived(char* topic, byte* payload, unsigned int len);
 PubSubClient pubSubClient(aws_endpoint, 8883, msgReceived, secureClient); 
 
 unsigned long lastPublish;
+boolean send_messages = true;
 
 /**
  * @brief 
@@ -87,11 +88,44 @@ void pubSubCheckConnect() {
  * @param length 
  */
 void msgReceived(char* topic, byte* payload, u_int32_t length) {
+  char json_data[length] = "";
+
   Serial.print("Message received on "); Serial.print(topic); Serial.print(": ");
   for (u_int32_t i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    // Serial.print((char)payload[i]);
+    json_data[i] = (char)payload[i];
   }
-  Serial.println();
+  Serial.println(json_data);
+
+  // Commands:
+  // {"cmd":"set_time","value":123456}
+  // {"cmd":"set_status","value":"on"} or {"cmd":"set_status","value":"off"}
+
+  // create JSON document
+  StaticJsonDocument<50> doc;
+  // Deserialize the JSON document
+  DeserializationError error = deserializeJson(doc, json_data);
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  // Fetch values.
+  // Most of the time, you can rely on the implicit casts.
+  // In other case, you can do doc["time"].as<long>();
+  const char* command = doc["cmd"];
+  if (strcmp("set_time", command) == 0) {
+    long time = doc["value"].as<long>();
+    // Serial.print("--> time: "); Serial.println(time);
+    // Set time between messages to received value
+    time_between_messages = time;
+  } else if (strcmp("set_status", command) == 0) {
+    const char* status = doc["value"];
+    // Serial.print("--> status: "); Serial.println(status);
+    send_messages = strcmp("on", status) == 0;
+  }
 }
 
 /**
@@ -231,10 +265,12 @@ void loop() {
  
   // Send sonsor data every 10 seconds
   if ((millis() - lastPublish) > time_between_messages) {
-    // Read sensor data
-    readSensorData();
-    // Send sensor data in JSON format to AWS IoT
-    publishSensorData();
+    if (send_messages) {
+      // Read sensor data
+      readSensorData();
+      // Send sensor data in JSON format to AWS IoT
+      publishSensorData();
+    }
     lastPublish = millis();
   }
 }
