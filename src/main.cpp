@@ -2,7 +2,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
+#include <Adafruit_BMP280.h>
 #include <ArduinoJson.h>
 #include "private_data.h"
 
@@ -35,7 +35,8 @@ BearSSL::PrivateKey clientPrivKey(privatePemKey);
 BearSSL::X509List rootCert(caPemCrt);
 
 // Adafruit_BME280 instance
-Adafruit_BME280 bme280;
+// Adafruit_BME280 bme280;
+Adafruit_BMP280 bmp280;
 
 // Variables for storing BME280 data
 float temperature;
@@ -147,9 +148,9 @@ void readCurrentTime() {
  * Read sensor data
  */
 void readSensorData() {
-  temperature = bme280.readTemperature();
-  pressure = bme280.readPressure() / 100.0F;
-  humidity = bme280.readHumidity();
+  temperature = bmp280.readTemperature();
+  pressure = bmp280.readPressure() / 100.0F;
+  //humidity = bmp280.readHumidity();
 }
 
 /**
@@ -234,10 +235,10 @@ void setup() {
   }
   Serial.print(", WiFi connected, IP address: "); Serial.println(WiFi.localIP());
 
-  // Initialize BME280 sensor to address 0x76 
-  int status = bme280.begin(0x76);
+  // Initialize BMP280 sensor to address 0x76 
+  int status = bmp280.begin(0x76);
   if (!status) {
-      Serial.println("BME280 sensor not available!");
+      Serial.println("bmp280 sensor not available!");
       while (1);
   }
 
