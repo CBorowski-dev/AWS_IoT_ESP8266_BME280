@@ -2,29 +2,38 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
 #include <Adafruit_BMP280.h>
 #include <ArduinoJson.h>
 #include "private_data.h"
+#include <list>
+#include <stdio.h>
 
 // Configuration for the timeserver
 const char* ntpServer1 = "pool.ntp.org";    // primary server 
 const char* ntpServer2 = "time.nist.gov";   // secondary server
 const long  gmtOffset_sec = 3600;           // GMT offset (seconds)
 const int   daylightOffset_sec = 3600;      // daylight offset (seconds)
-const u_int16_t bufferSize = 400;           // buffer size used by the PubSubClient
+const u_int16_t bufferSize = 2048;           // buffer size used by the PubSubClient
 time_t gmtRawTime;
 
 unsigned long time_between_messages = 10000;          // time between MQTT messages in msec
 
-// AWS endpoint
-const char* aws_endpoint = "akyvbbf6sysh7-ats.iot.eu-central-1.amazonaws.com";
-
-// Client ID
-const char* clientID = "weatherstation2";
+std::string const SHADOW_TOPIC_PREFIX = "$aws/things/" + std::string(CLIENTID) + "/shadow";
 
 // Topic we are going publish data to and to receive data from
-const char* send_topic  = "data/weatherapp/weatherstation2/send";
-const char* receive_topic  = "cmd/weatherapp/weatherstation2/receive";
+std::string send_topic  = "data/weatherapp/" + std::string(CLIENTID) + "/send";
+std::string shadow_update_topic = SHADOW_TOPIC_PREFIX + "/update";
+std::string shadow_get_topic = SHADOW_TOPIC_PREFIX + "/get";
+
+std::list<std::string> subscribe_topics_list = {
+  SHADOW_TOPIC_PREFIX + "/update/accepted",
+  SHADOW_TOPIC_PREFIX + "/update/rejected",
+  SHADOW_TOPIC_PREFIX + "/update/delta",
+  // SHADOW_TOPIC_PREFIX + "/update/documents",
+  SHADOW_TOPIC_PREFIX + "/get/accepted",
+  SHADOW_TOPIC_PREFIX + "/get/rejected"
+};
 
 // Create WiFiClientSecure instance
 BearSSL::WiFiClientSecure secureClient;
@@ -35,8 +44,8 @@ BearSSL::PrivateKey clientPrivKey(privatePemKey);
 BearSSL::X509List rootCert(caPemCrt);
 
 // Adafruit_BME280 instance
-// Adafruit_BME280 bme280;
-Adafruit_BMP280 bmp280;
+Adafruit_BME280 bme280;
+//Adafruit_BMP280 bme280;
 
 // Variables for storing BME280 data
 float temperature;
@@ -49,7 +58,7 @@ void msgReceived(char* topic, byte* payload, unsigned int len);
 // Create PubSubClient instance
 // Using X.509 certificate based mutual authentication --> use 8883
 // Using MQTT over WebSocket --> use 443 or 8443
-PubSubClient pubSubClient(aws_endpoint, 8883, msgReceived, secureClient); 
+PubSubClient pubSubClient(AWS_IOT_ENDPOINT, 8883, msgReceived, secureClient); 
 
 unsigned long lastPublish;
 boolean send_messages = true;
@@ -60,12 +69,16 @@ boolean send_messages = true;
  */
 void pubSubCheckConnect() {
   if (!pubSubClient.connected()) {
-    Serial.print("PubSubClient connecting to: "); Serial.print(aws_endpoint);
+    Serial.print("PubSubClient connecting to: "); Serial.println(AWS_IOT_ENDPOINT);
     while (!pubSubClient.connected()) {
       Serial.print(".");
-      if (pubSubClient.connect(clientID)) {
-        Serial.println(" connected");
-        pubSubClient.subscribe(receive_topic);
+      if (pubSubClient.connect(CLIENTID)) {
+        Serial.println("Is connected");
+        for(std::string mqtt_topic: subscribe_topics_list){
+          Serial.printf("Subscribing to MQTT topic: %s\n", mqtt_topic.c_str());
+          pubSubClient.subscribe(mqtt_topic.c_str());
+        }
+        break;
       } else {
         Serial.print("failed, rc=");
         Serial.println(pubSubClient.state());
@@ -89,21 +102,18 @@ void pubSubCheckConnect() {
  * @param length 
  */
 void msgReceived(char* topic, byte* payload, u_int32_t length) {
-  char json_data[length] = "";
+  Serial.println("-----------------------------------------------");
+  Serial.println("## MQTT Callback ##");
+  char json_data[length];
 
-  Serial.print("Message received on "); Serial.print(topic); Serial.print(": ");
+  Serial.printf("Message arrived on topic: %s (%u) \n", topic, length);
   for (u_int32_t i = 0; i < length; i++) {
     // Serial.print((char)payload[i]);
     json_data[i] = (char)payload[i];
   }
-  Serial.println(json_data);
-
-  // Commands:
-  // {"cmd":"set_time","value":123456}
-  // {"cmd":"set_status","value":"on"} or {"cmd":"set_status","value":"off"}
-
+  Serial.printf("Message is: %s\n", json_data);
   // create JSON document
-  StaticJsonDocument<50> doc;
+  StaticJsonDocument<bufferSize> doc;
   // Deserialize the JSON document
   DeserializationError error = deserializeJson(doc, json_data);
   // Test if parsing succeeds.
@@ -113,19 +123,84 @@ void msgReceived(char* topic, byte* payload, u_int32_t length) {
     return;
   }
 
-  // Fetch values.
-  // Most of the time, you can rely on the implicit casts.
-  // In other case, you can do doc["time"].as<long>();
-  const char* command = doc["cmd"];
-  if (strcmp("set_time", command) == 0) {
-    long time = doc["value"].as<long>();
-    // Serial.print("--> time: "); Serial.println(time);
-    // Set time between messages to received value
-    time_between_messages = time;
-  } else if (strcmp("set_status", command) == 0) {
-    const char* status = doc["value"];
-    // Serial.print("--> status: "); Serial.println(status);
-    send_messages = strcmp("on", status) == 0;
+  // Commands:
+  // {"cmd":"set_time","value":60000}
+  // {"cmd":"set_status","value":"on"} or {"cmd":"set_status","value":"off"}
+  if (std::string(topic) == (SHADOW_TOPIC_PREFIX + "/update/delta")) {
+    // create JSON document
+    StaticJsonDocument<bufferSize> sndJsonDoc;
+    JsonObject reportedState = sndJsonDoc.createNestedObject("state");
+    JsonObject reported = reportedState.createNestedObject("reported");
+    // Fetch values.
+    // Most of the time, you can rely on the implicit casts.
+    // In other case, you can do doc["time"].as<long>();
+    JsonObject desiredState = doc["state"];
+    if (desiredState.containsKey("time")) {
+      long time = desiredState["time"].as<long>();
+      Serial.print("--> time: "); Serial.println(time);
+      // Set time between messages to received value
+      time_between_messages = time;
+      reported["time"] = time_between_messages;
+    } 
+    if (desiredState.containsKey("status")) {
+      const char* status = desiredState["status"];
+      Serial.print("--> status: "); Serial.println(status);
+      send_messages = strcmp("on", status) == 0;
+      reported["status"] = status;
+    }
+    
+    if(!reported.isNull()){
+      // convert JSON document to char array
+      u_int16_t jsonSize = measureJson(sndJsonDoc);
+      char buffer[jsonSize + 1] = "";
+      buffer[jsonSize + 1] = '\n';
+      serializeJson(sndJsonDoc, buffer, jsonSize);
+      if (pubSubClient.publish(shadow_update_topic.c_str(), buffer)) {
+        Serial.print("==> Message published: "); Serial.println(buffer);
+        // pubSubClient.publish(shadow_get_topic.c_str(), "");
+      } else {
+        Serial.print("==> Message couldn't be published: "); Serial.println(buffer);
+      }
+    }
+  } else if (std::string(topic) == (SHADOW_TOPIC_PREFIX + "/get/accepted")){
+    JsonObject state = doc["state"];
+    JsonObject desiredState = state["desired"];
+    if (desiredState.containsKey("time")) {
+      long time = desiredState["time"].as<long>();
+      // Set time between messages to received value
+      time_between_messages = time;
+    } 
+    if (desiredState.containsKey("status")) {
+      const char* status = desiredState["status"];
+      send_messages = strcmp("on", status) == 0;
+    }
+  } else if (std::string(topic) == (SHADOW_TOPIC_PREFIX + "/get/rejected")){
+    std::string message = doc["message"];
+    if (message == "No shadow exists with name: \'" + std::string(CLIENTID) + "\'") {
+      Serial.println("Creating Device Shadow for the device");
+      send_messages = true;
+
+      StaticJsonDocument<bufferSize> sndJsonDoc;
+      JsonObject state = sndJsonDoc.createNestedObject("state");
+      JsonObject reported = state.createNestedObject("reported");
+      JsonObject desired = state.createNestedObject("desired");
+      reported["welcome"] = "aws-iot";
+      reported["time"] = time_between_messages;
+      reported["status"] = "on";
+      desired["welcome"] = "aws-iot";
+      desired["time"] = time_between_messages;
+      desired["status"] = "on";
+      // convert JSON document to char array
+      u_int16_t jsonSize = measureJson(sndJsonDoc);
+      char buffer[jsonSize + 1] = "";
+      buffer[jsonSize + 1] = '\n';
+      serializeJson(sndJsonDoc, buffer, jsonSize);
+      if (pubSubClient.publish(shadow_update_topic.c_str(), buffer)) {
+        Serial.print("==> Message published: "); Serial.println(buffer);
+      } else {
+        Serial.print("==> Message couldn't be published: "); Serial.println(buffer);
+      }
+    } 
   }
 }
 
@@ -148,9 +223,9 @@ void readCurrentTime() {
  * Read sensor data
  */
 void readSensorData() {
-  temperature = bmp280.readTemperature();
-  pressure = bmp280.readPressure() / 100.0F;
-  //humidity = bmp280.readHumidity();
+  temperature = bme280.readTemperature();
+  pressure = bme280.readPressure() / 100.0F;
+  //humidity = bme280.readHumidity();
 }
 
 /**
@@ -176,10 +251,12 @@ void publishSensorData() {
     "PressureUnit": "hPa"
   }
   */
+  Serial.println("-----------------------------------------------");
+  Serial.println("## MQTT Publish ##");
 
   // create JSON document
   StaticJsonDocument<bufferSize> doc;
-  doc["ClientID"] = clientID;
+  doc["ClientID"] = CLIENTID;
   // include time
   char t_buffer[26];
   readCurrentTime();
@@ -187,8 +264,8 @@ void publishSensorData() {
   doc["Time"] = t_buffer;
   // include GPS coordinate, here hard coded
   JsonObject GPS = doc.createNestedObject("GPS");
-  GPS["latitude"] = 51.764000;
-  GPS["longitude"] = 8.777043;
+  GPS["latitude"] = 51.498348;
+  GPS["longitude"] = 7.005091;
   // include BME280 sensor data
   JsonObject BME280 = doc.createNestedObject("BME280");
   BME280["Temperature"] = temperature;
@@ -207,13 +284,22 @@ void publishSensorData() {
   serializeJson(doc, buffer, jsonSize);
 
   // publish data
-  if (pubSubClient.publish(send_topic, buffer)) {
+  if (pubSubClient.publish(send_topic.c_str(), buffer)) {
     Serial.print("==> Message published: "); Serial.println(buffer);
   } else {
     Serial.print("==> Message couldn't be published: "); Serial.println(buffer);
   }
 }
 
+void get_values_from_device_shadow(){
+  Serial.println("-----------------------------------------------");
+  Serial.println("Retrieve values from Device Shadow");
+  if (pubSubClient.publish(shadow_get_topic.c_str(), "")) {
+      Serial.println("==> Message published");
+  } else {
+    Serial.println("==> Message couldn't be published");
+  }
+}
 /**
  * @brief 
  * Arduino framework setup() function
@@ -235,10 +321,10 @@ void setup() {
   }
   Serial.print(", WiFi connected, IP address: "); Serial.println(WiFi.localIP());
 
-  // Initialize BMP280 sensor to address 0x76 
-  int status = bmp280.begin(0x76);
+  // Initialize BME280 sensor to address 0x76 
+  int status = bme280.begin(0x76);
   if (!status) {
-      Serial.println("bmp280 sensor not available!");
+      Serial.println("BME280 sensor not available!");
       while (1);
   }
 
@@ -255,6 +341,9 @@ void setup() {
   // Set certificates
   secureClient.setClientRSACert(&clientCertList, &clientPrivKey);
   secureClient.setTrustAnchors(&rootCert);
+  pubSubCheckConnect();
+  delay(1000);
+  get_values_from_device_shadow();
 }
 
 /**
