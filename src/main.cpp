@@ -17,7 +17,7 @@ const int   daylightOffset_sec = 3600;      // daylight offset (seconds)
 const u_int16_t bufferSize = 2048;           // buffer size used by the PubSubClient
 time_t gmtRawTime;
 
-unsigned long time_between_messages = 10000;          // time between MQTT messages in msec
+unsigned long time_between_messages = 20000;          // time between MQTT messages in msec
 
 std::string const SHADOW_TOPIC_PREFIX = "$aws/things/" + std::string(CLIENTID) + "/shadow";
 
@@ -45,7 +45,7 @@ BearSSL::X509List rootCert(caPemCrt);
 
 // Adafruit_BME280 instance
 Adafruit_BME280 bme280;
-//Adafruit_BMP280 bme280;
+// Adafruit_BMP280 bme280;
 
 // Variables for storing BME280 data
 float temperature;
@@ -124,8 +124,7 @@ void msgReceived(char* topic, byte* payload, u_int32_t length) {
   }
 
   // Commands:
-  // {"cmd":"set_time","value":60000}
-  // {"cmd":"set_status","value":"on"} or {"cmd":"set_status","value":"off"}
+  // {"state": {"desired": {"time": 80000}}} or {"state": {"desired": {"status": "on"}}} or {"state": {"desired": {"time": 80000, "status": "on"}}}
   if (std::string(topic) == (SHADOW_TOPIC_PREFIX + "/update/delta")) {
     // create JSON document
     StaticJsonDocument<bufferSize> sndJsonDoc;
@@ -134,16 +133,16 @@ void msgReceived(char* topic, byte* payload, u_int32_t length) {
     // Fetch values.
     // Most of the time, you can rely on the implicit casts.
     // In other case, you can do doc["time"].as<long>();
-    JsonObject desiredState = doc["state"];
-    if (desiredState.containsKey("time")) {
-      long time = desiredState["time"].as<long>();
+    JsonObject state = doc["state"];
+    if (state.containsKey("time")) {
+      long time = state["time"].as<long>();
       Serial.print("--> time: "); Serial.println(time);
       // Set time between messages to received value
       time_between_messages = time;
       reported["time"] = time_between_messages;
     } 
-    if (desiredState.containsKey("status")) {
-      const char* status = desiredState["status"];
+    if (state.containsKey("status")) {
+      const char* status = state["status"];
       Serial.print("--> status: "); Serial.println(status);
       send_messages = strcmp("on", status) == 0;
       reported["status"] = status;
@@ -225,7 +224,7 @@ void readCurrentTime() {
 void readSensorData() {
   temperature = bme280.readTemperature();
   pressure = bme280.readPressure() / 100.0F;
-  //humidity = bme280.readHumidity();
+  humidity = bme280.readHumidity();
 }
 
 /**
