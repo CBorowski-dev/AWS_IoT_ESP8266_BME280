@@ -14,7 +14,7 @@ const char* ntpServer1 = "pool.ntp.org";    // primary server
 const char* ntpServer2 = "time.nist.gov";   // secondary server
 const long  gmtOffset_sec = 3600;           // GMT offset (seconds)
 const int   daylightOffset_sec = 3600;      // daylight offset (seconds)
-const u_int16_t bufferSize = 2048;           // buffer size used by the PubSubClient
+const u_int16_t bufferSize = 1024;           // buffer size used by the PubSubClient
 time_t gmtRawTime;
 
 unsigned long time_between_messages = 20000;          // time between MQTT messages in msec
@@ -263,8 +263,8 @@ void publishSensorData() {
   doc["Time"] = t_buffer;
   // include GPS coordinate, here hard coded
   JsonObject GPS = doc.createNestedObject("GPS");
-  GPS["latitude"] = 51.498348;
-  GPS["longitude"] = 7.005091;
+  GPS["latitude"] = LATITUDE;
+  GPS["longitude"] = LONGITUDE;
   // include BME280 sensor data
   JsonObject BME280 = doc.createNestedObject("BME280");
   BME280["Temperature"] = temperature;

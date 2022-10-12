@@ -8,6 +8,10 @@ const char* AWS_IOT_ENDPOINT = "<AWS END Point>";
 // Client ID
 #define CLIENTID "AWS IoT Thing name";
 
+// GPS coordinate
+#define LATITUDE 12345
+#define LONGITUDE 12345
+
 // For the two certificate strings below paste in the text of your AWS 
 // device certificate and private key:
 
